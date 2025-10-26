@@ -12,3 +12,6 @@ output/
 execution_log.txt
 !frames/.gitkeep
 !output/.gitkeep
+execution_log.txt
+execution_log.json
+*.log

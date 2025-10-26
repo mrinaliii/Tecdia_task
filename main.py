@@ -2,7 +2,7 @@ import time
 import argparse
 from pathlib import Path
 import json
-
+from config import Config
 from frame_extractor import FrameExtractor
 from frame_loader import FrameLoader
 from frame_reconstructor import FrameReconstructor
@@ -78,15 +78,24 @@ def preflight_checks(video_path):
     )
 
     if memory_needed > 14:
-        print("\n⚠ WARNING: Reconstruction may use significant memory")
+        print("\nWARNING: Reconstruction may use significant memory")
         print("  Consider closing other applications")
 
-    print("\n✓ Pre-flight checks complete\n")
+    print("\nPre-flight checks complete\n")
 
     return props
 
 
-def main(video_path, output_path="output/reconstructed.mp4", fps=30):
+def main(video_path, output_path="output/reconstructed.mp4", fps=30, mode="balanced"):
+    if mode == "quick":
+        Config.quick_mode()
+    elif mode == "fast":
+        Config.fast_mode()
+    elif mode == "quality":
+        Config.quality_mode()
+    else:
+        Config.balanced_mode()
+
     video_props = preflight_checks(video_path)
 
     print("\n" + "=" * 60)
@@ -111,7 +120,7 @@ def main(video_path, output_path="output/reconstructed.mp4", fps=30):
 
     expected_frames = 10 * 30
     if frame_count != expected_frames:
-        print(f"\n⚠ WARNING: Expected {expected_frames} frames, got {frame_count}")
+        print(f"\nWARNING: Expected {expected_frames} frames, got {frame_count}")
 
     print("\nSTEP 2: Frame Loading & Hash Computation")
     print("-" * 60)
@@ -142,11 +151,14 @@ def main(video_path, output_path="output/reconstructed.mp4", fps=30):
     print("\nSTEP 5: SSIM Refinement")
     print("-" * 60)
     step_start = time.time()
-    sequence = reconstructor.refine_with_ssim(sequence, window_size=4)
-    logger.log_step("SSIM Refinement", time.time() - step_start)
+    if Config.ENABLE_SSIM_REFINEMENT:
+        sequence = reconstructor.refine_with_ssim_parallel(
+            sequence, window_size=Config.REFINEMENT_WINDOW_SIZE
+        )
+    else:
+        print("  SSIM refinement disabled (quick mode)")
 
-    print("\nSaving sequence...")
-    save_sequence(sequence)
+    logger.log_step("SSIM Refinement", time.time() - step_start)
 
     print("\nSTEP 6: Video Writing")
     print("-" * 60)
@@ -228,7 +240,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--fps", type=int, default=30, help="Output video FPS (default: 30)"
     )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        choices=["quick", "fast", "balanced", "quality"],
+        default="balanced",
+        help="Execution mode: quick (no SSIM), fast (smart SSIM), balanced (default), quality (full SSIM)",
+    )
 
     args = parser.parse_args()
 
-    main(args.video_path, args.output, args.fps)
+    main(args.video_path, args.output, args.fps, args.mode)

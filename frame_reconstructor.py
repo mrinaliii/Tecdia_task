@@ -1,4 +1,6 @@
 import numpy as np
+from concurrent.futures import ThreadPoolExecutor
+import os
 from tqdm import tqdm
 from similarity_metrics import SimilarityCalculator
 import time
@@ -20,6 +22,7 @@ class FrameReconstructor:
         candidates = np.argsort(avg_distances)[-10:]
 
         print(f"  Top starting frame candidates: {candidates[:5]}")
+
         return candidates[-1]
 
     def greedy_nearest_neighbor(self, start_idx=None):
@@ -35,8 +38,12 @@ class FrameReconstructor:
 
         with tqdm(total=self.n_frames - 1, desc="Building sequence") as pbar:
             while len(sequence) < self.n_frames:
-                distances = self.similarity_matrix[current_idx].copy()
-                distances[list(used)] = np.inf
+                distances = (
+                    self.similarity_matrix[current_idx].astype(np.float32).copy()
+                )
+
+                for used_idx in used:
+                    distances[used_idx] = np.finfo(np.float32).max
 
                 next_idx = np.argmin(distances)
 
@@ -57,8 +64,16 @@ class FrameReconstructor:
 
         refined = sequence.copy()
         improvements = 0
+        problem_areas = self._identify_problem_areas(sequence)
 
-        for i in tqdm(range(len(sequence) - window_size), desc="Refining"):
+        print(f"  Identified {len(problem_areas)} potential problem areas")
+        print(
+            f"  Refining {len(problem_areas)} windows instead of {len(sequence) - window_size}"
+        )
+        for i in tqdm(problem_areas, desc="Refining problem areas"):
+            if i + window_size > len(sequence):
+                continue
+
             window = refined[i : i + window_size]
 
             if window_size <= 4:
@@ -71,6 +86,27 @@ class FrameReconstructor:
         print(f"✓ Refinement complete: {improvements} improvements in {elapsed:.2f}s")
 
         return refined
+
+    def _identify_problem_areas(self, sequence, threshold_percentile=75):
+        distances = []
+        for i in range(len(sequence) - 1):
+            idx1 = self.frame_indices.index(sequence[i])
+            idx2 = self.frame_indices.index(sequence[i + 1])
+            distance = self.similarity_matrix[idx1, idx2]
+            distances.append(distance)
+
+        threshold = np.percentile(distances, threshold_percentile)
+
+        problem_indices = []
+        for i, dist in enumerate(distances):
+            if dist > threshold:
+                for offset in range(-1, 2):  # Check i-1, i, i+1
+                    idx = i + offset
+                    if 0 <= idx < len(sequence) - 4:  # Ensure window fits
+                        if idx not in problem_indices:
+                            problem_indices.append(idx)
+
+        return sorted(problem_indices)
 
     def _optimize_window(self, window):
         from itertools import permutations
@@ -117,6 +153,57 @@ class FrameReconstructor:
             )
             return sequence
 
+    def _optimize_window_parallel(self, windows):
+        results = {}
+
+        max_workers = min(4, os.cpu_count() or 4)
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_idx = {}
+            for idx, window in windows:
+                future = executor.submit(self._optimize_window, window)
+                future_to_idx[future] = idx
+
+            for future in future_to_idx:
+                idx = future_to_idx[future]
+                results[idx] = future.result()
+
+        return results
+
+    def refine_with_ssim_parallel(self, sequence, window_size=4):
+        print(f"\nRefining sequence with SSIM (parallel, window size={window_size})...")
+        start_time = time.time()
+
+        refined = sequence.copy()
+
+        problem_areas = self._identify_problem_areas(sequence)
+        print(f"  Identified {len(problem_areas)} potential problem areas")
+
+        if len(problem_areas) == 0:
+            print("  No problem areas found - sequence looks good!")
+            return refined
+
+        windows = []
+        for i in problem_areas:
+            if i + window_size <= len(sequence):
+                window = refined[i : i + window_size]
+                windows.append((i, window))
+
+        print(f"  Processing {len(windows)} windows in parallel...")
+
+        results = self._optimize_window_parallel(windows)
+
+        improvements = 0
+        for i, (best_window, improved) in results.items():
+            if improved:
+                refined[i : i + window_size] = best_window
+                improvements += 1
+
+        elapsed = time.time() - start_time
+        print(f"✓ Refinement complete: {improvements} improvements in {elapsed:.2f}s")
+
+        return refined
+
 
 if __name__ == "__main__":
     from frame_loader import FrameLoader
@@ -125,7 +212,6 @@ if __name__ == "__main__":
     frames_data = loader.load_all_frames_parallel()
     similarity_matrix, indices = loader.compute_hash_similarity_matrix(frames_data)
 
-    # Reconstruct
     reconstructor = FrameReconstructor(frames_data, similarity_matrix, indices)
     sequence = reconstructor.greedy_nearest_neighbor()
 

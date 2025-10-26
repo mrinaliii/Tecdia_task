@@ -61,7 +61,7 @@ class FrameLoader:
 
         print(f"Computing hash similarity matrix for {n_frames} frames...")
 
-        similarity_matrix = np.zeros((n_frames, n_frames), dtype=np.int16)
+        similarity_matrix = np.zeros((n_frames, n_frames), dtype=np.float32)
 
         with tqdm(
             total=n_frames * (n_frames - 1) // 2, desc="Computing similarities"
