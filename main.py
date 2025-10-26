@@ -8,6 +8,12 @@ from frame_loader import FrameLoader
 from frame_reconstructor import FrameReconstructor
 from video_writer import VideoWriter
 from similarity_metrics import SimilarityCalculator
+from utils import (
+    validate_video_specs,
+    check_disk_space,
+    estimate_memory_usage,
+    create_sample_visualization,
+)
 
 
 class ExecutionLogger:
@@ -55,7 +61,40 @@ class ExecutionLogger:
         return total_time
 
 
+def preflight_checks(video_path):
+    print("\n" + "=" * 60)
+    print("PRE-FLIGHT CHECKS")
+    print("=" * 60)
+
+    if not Path(video_path).exists():
+        raise FileNotFoundError(f"Video not found: {video_path}")
+
+    props = validate_video_specs(video_path)
+
+    check_disk_space(required_gb=5)
+
+    memory_needed = estimate_memory_usage(
+        props["frame_count"], props["width"], props["height"]
+    )
+
+    if memory_needed > 14:
+        print("\n⚠ WARNING: Reconstruction may use significant memory")
+        print("  Consider closing other applications")
+
+    print("\n✓ Pre-flight checks complete\n")
+
+    return props
+
+
 def main(video_path, output_path="output/reconstructed.mp4", fps=30):
+    video_props = preflight_checks(video_path)
+
+    print("\n" + "=" * 60)
+    print("JUMBLED FRAMES RECONSTRUCTION PIPELINE")
+    print("=" * 60 + "\n")
+
+    logger = ExecutionLogger()
+    logger.start()
     print("\n" + "=" * 60)
     print("JUMBLED FRAMES RECONSTRUCTION PIPELINE")
     print("=" * 60 + "\n")
@@ -113,7 +152,13 @@ def main(video_path, output_path="output/reconstructed.mp4", fps=30):
     writer.write_video(frames_data, sequence)
     logger.log_step("Video Writing", time.time() - step_start)
 
-    print("\nSTEP 7: Quality Assessment")
+    print("\nSTEP 7: Creating Sample Visualization")
+    print("-" * 60)
+    step_start = time.time()
+    create_sample_visualization(frames_data, sequence)
+    logger.log_step("Visualization", time.time() - step_start)
+
+    print("\nSTEP 8: Quality Assessment")
     print("-" * 60)
     step_start = time.time()
     avg_similarity = calculate_reconstruction_quality(frames_data, sequence)
