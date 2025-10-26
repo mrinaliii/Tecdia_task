@@ -145,6 +145,9 @@ def main(video_path, output_path="output/reconstructed.mp4", fps=30):
     sequence = reconstructor.refine_with_ssim(sequence, window_size=4)
     logger.log_step("SSIM Refinement", time.time() - step_start)
 
+    print("\nSaving sequence...")
+    save_sequence(sequence)
+
     print("\nSTEP 6: Video Writing")
     print("-" * 60)
     step_start = time.time()
@@ -200,6 +203,17 @@ def calculate_reconstruction_quality(frames_data, sequence):
     print(f"  Average consecutive frame similarity: {avg_similarity:.2%}")
 
     return avg_similarity
+
+
+def save_sequence(sequence, output_file="output/sequence.txt"):
+    output_path = Path(output_file)
+    output_path.parent.mkdir(exist_ok=True)
+
+    with open(output_path, "w") as f:
+        for idx in sequence:
+            f.write(f"{idx}\n")
+
+    print(f"  Sequence saved to: {output_path}")
 
 
 if __name__ == "__main__":
