@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+frames/
+output/
+*.mp4
+*.avi
+execution_log.txt
+!frames/.gitkeep
+!output/.gitkeep
