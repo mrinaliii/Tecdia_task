@@ -25,31 +25,31 @@ class ExecutionLogger:
 
     def finish_and_save(self):
         total_time = time.time() - self.start_time
-        self.timings['total'] = total_time
+        self.timings["total"] = total_time
 
         report = []
         report.append("=" * 60)
         report.append("JUMBLED FRAMES RECONSTRUCTION - EXECUTION LOG")
         report.append("=" * 60)
         report.append(f"\nTotal Execution Time: {total_time:.2f} seconds")
-        report.append(f"                      ({total_time/60:.2f} minutes)")
+        report.append(f"                      ({total_time / 60:.2f} minutes)")
         report.append("\nStep-by-Step Breakdown:")
         report.append("-" * 60)
 
         for step, duration in self.timings.items():
-            if step != 'total':
+            if step != "total":
                 percentage = (duration / total_time) * 100
                 report.append(f"  {step:.<45} {duration:>6.2f}s ({percentage:>5.1f}%)")
 
         report.append("=" * 60)
 
-        with open(self.log_file, 'w') as f:
-            f.write('\n'.join(report))
+        with open(self.log_file, "w") as f:
+            f.write("\n".join(report))
 
-        print('\n' + '\n'.join(report))
+        print("\n" + "\n".join(report))
 
-        json_file = self.log_file.replace('.txt', '.json')
-        with open(json_file, 'w') as f:
+        json_file = self.log_file.replace(".txt", ".json")
+        with open(json_file, "w") as f:
             json.dump(self.timings, f, indent=2)
 
         return total_time
@@ -75,4 +75,101 @@ def main(video_path, output_path="output/reconstructed.mp4", fps=30):
         print(f"\n⚠ WARNING: Expected {expected_frames} frames, got {frame_count}")
 
     print("\nSTEP 2: Frame Loading & Hash Computation")
-    print("-
+    print("-" * 60)
+    step_start = time.time()
+    loader = FrameLoader()
+    frames_data = loader.load_all_frames_parallel(max_workers=10)
+    logger.log_step("Frame Loading", time.time() - step_start)
+
+    print("\nSTEP 3: Similarity Matrix Computation")
+    print("-" * 60)
+    step_start = time.time()
+    similarity_matrix, frame_indices = loader.compute_hash_similarity_matrix(
+        frames_data
+    )
+    logger.log_step("Similarity Matrix", time.time() - step_start)
+
+    print("\nSTEP 4: Frame Sequence Reconstruction")
+    print("-" * 60)
+    step_start = time.time()
+    reconstructor = FrameReconstructor(frames_data, similarity_matrix, frame_indices)
+    sequence = reconstructor.greedy_nearest_neighbor()
+    logger.log_step("Initial Reconstruction", time.time() - step_start)
+
+    step_start = time.time()
+    sequence = reconstructor.try_reverse_sequence(sequence)
+    logger.log_step("Direction Testing", time.time() - step_start)
+
+    print("\nSTEP 5: SSIM Refinement")
+    print("-" * 60)
+    step_start = time.time()
+    sequence = reconstructor.refine_with_ssim(sequence, window_size=4)
+    logger.log_step("SSIM Refinement", time.time() - step_start)
+
+    print("\nSTEP 6: Video Writing")
+    print("-" * 60)
+    step_start = time.time()
+    writer = VideoWriter(output_path, fps=fps)
+    writer.write_video(frames_data, sequence)
+    logger.log_step("Video Writing", time.time() - step_start)
+
+    print("\nSTEP 7: Quality Assessment")
+    print("-" * 60)
+    step_start = time.time()
+    avg_similarity = calculate_reconstruction_quality(frames_data, sequence)
+    logger.log_step("Quality Assessment", time.time() - step_start)
+
+    total_time = logger.finish_and_save()
+
+    print(f"\n{'=' * 60}")
+    print("RECONSTRUCTION COMPLETE")
+    print(f"{'=' * 60}")
+    print(f"  Output: {output_path}")
+    print(f"  Frames: {len(sequence)}")
+    print(f"  Average Frame Similarity: {avg_similarity:.2%}")
+    print(f"  Total Time: {total_time:.2f} seconds")
+    print(f"  Log saved to: execution_log.txt")
+    print(f"{'=' * 60}\n")
+
+
+def calculate_reconstruction_quality(frames_data, sequence):
+    calc = SimilarityCalculator()
+
+    print("Calculating reconstruction quality...")
+    total_similarity = 0
+    sample_size = min(50, len(sequence) - 1)
+
+    step = len(sequence) // sample_size
+
+    for i in range(0, len(sequence) - 1, step):
+        if i >= len(sequence) - 1:
+            break
+
+        img1 = frames_data[sequence[i]]["image"]
+        img2 = frames_data[sequence[i + 1]]["image"]
+
+        similarity = calc.compute_ssim(img1, img2)
+        total_similarity += similarity
+
+    avg_similarity = total_similarity / sample_size
+    print(f"  Average consecutive frame similarity: {avg_similarity:.2%}")
+
+    return avg_similarity
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Reconstruct jumbled video frames")
+    parser.add_argument("video_path", type=str, help="Path to jumbled video file")
+    parser.add_argument(
+        "--output",
+        type=str,
+        default="output/reconstructed.mp4",
+        help="Output video path (default: output/reconstructed.mp4)",
+    )
+    parser.add_argument(
+        "--fps", type=int, default=30, help="Output video FPS (default: 30)"
+    )
+
+    args = parser.parse_args()
+
+    main(args.video_path, args.output, args.fps)
